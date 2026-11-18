@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+runs/
+.pytest_cache/
+.idea/
+.vscode/
+*.tmp

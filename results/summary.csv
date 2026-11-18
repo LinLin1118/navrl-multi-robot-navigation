@@ -1,0 +1,4 @@
+scenario,static,dynamic,reached,success_rate,near_miss,penetration,mean_arrival,mean_min_clearance,worst_min_clearance
+Static (15),15,0,6,100.0,0,0,9.85,1.129,0.356
+Dynamic (15),0,15,6,100.0,1,4,9.68,-0.053,-0.381
+Mixed (15),7,8,6,100.0,0,2,11.08,0.347,-0.322

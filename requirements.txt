@@ -1,0 +1,5 @@
+numpy
+matplotlib
+torch>=2.0
+tensordict>=0.4
+torchrl>=0.4
