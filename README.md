@@ -89,9 +89,10 @@ the three scenes with frame rendering take 5-6 minutes end to end.
 src/
   scenarios.py         scenario sampling, safety filter, clearance  (NumPy only)
   metrics.py           success rate, near miss, penetration, clearance  (NumPy only)
+  reward.py            the training reward equation, transcribed and testable
   run_scenarios.py     runs the three scenes with the policy, writes results/
   navrl_pretrained/    vendored inference code + checkpoint (see ATTRIBUTION.md)
-tests/                 unittest suite, 30 tests
+tests/                 unittest suite, 46 tests
 results/               results.json, summary.csv, figure
 docs/                  report and one frame per scene
 media/                 three mp4 recordings and their GIF previews
@@ -123,11 +124,48 @@ ffmpeg -y -framerate 10 -i runs/Static/f_%04d.png -c:v libx264 -pix_fmt yuv420p 
 python -m unittest discover -s tests -t .
 ```
 
-30 tests, no third-party runner needed. They cover the sampling rules (start and
+46 tests, no third-party runner needed. They cover the sampling rules (start and
 goal separation, obstacle placement, arena bounds), the safety filter (a step into
 an obstacle is changed, a step outside the arena is stopped), the metric definitions,
-and a consistency check on the shipped `results/results.json` so the report cannot
-drift away from the data.
+the reward equation below, and a consistency check on the shipped
+`results/results.json` so the report cannot drift away from the data.
+
+## Reward function
+
+The policy is not trained in this repository, so the reward is never evaluated at
+run time. It is documented here because the behaviour of the checkpoint is a direct
+consequence of how it was shaped, and because the equation should be readable as
+code rather than only as prose: `src/reward.py` implements it and
+`tests/test_reward.py` checks every term.
+
+Transcribed from the upstream training environment,
+`isaac-training/training/scripts/env.py` lines 546-577 at commit `3725bcc`:
+
+$$
+r_t \;=\; \underbrace{v_t \cdot \hat{g}_t}_{\text{goal progress}}
+\;+\; \underbrace{1}_{\text{step bonus}}
+\;+\; \underbrace{\frac{1}{WH}\sum_{w,h}
+      \log \operatorname{clamp}\!\left(r_{\max} - \lambda_{t,w,h},\ \epsilon,\ r_{\max}\right)}_{\text{static safety}}
+\;+\; \underbrace{\frac{1}{K}\sum_{k=1}^{K}
+      \log \operatorname{clamp}\!\left(\delta_{t,k},\ \epsilon,\ r_{\max}\right)}_{\text{dynamic safety (only if } K>0\text{)}}
+\;-\; \underbrace{0.1\,\lVert v_t - v_{t-1}\rVert}_{\text{smoothness}}
+\;-\; \underbrace{8\left[(z_t - z_{hi})_+^2 + (z_{lo} - z_t)_+^2\right]}_{\text{height penalty}}
+$$
+
+| Term | Symbol | Weight | Why it has this shape |
+|---|---|---|---|
+| Goal progress | $v_t \cdot \hat{g}_t$ | +1 | The only term that rewards getting closer; a hovering robot earns nothing from it. |
+| Step bonus | $1$ | +1 | Keeps the return positive while alive; it is a constant, so it cannot be farmed by loitering. |
+| Static safety | $\frac{1}{WH}\sum \log(r_{\max}-\lambda)$ | +1 | Logarithmic, so the reward saturates at the 4 m sensor range and one close beam dominates. |
+| Dynamic safety | $\frac{1}{K}\sum \log \delta_{t,k}$ | +1 | Same shape for the $K=5$ nearest moving obstacles; omitted when a scene has none. |
+| Smoothness | $\lVert v_t - v_{t-1}\rVert$ | −0.1 | Penalises acceleration, not speed, so fast but steady flight stays cheap. |
+| Height | $(z-z_{hi})_+^2 + (z_{lo}-z)_+^2$ | −8 | Zero inside the band; eight times heavier than smoothness because leaving it ends the episode. |
+| Terminal step | — | 0 | Collision, goal and timeout all end the episode with no bonus, so a bad episode cannot be bought back. |
+
+Here $v_t$ is the world-frame velocity command, $\hat{g}_t$ the unit vector to the
+goal, $\lambda_{t,w,h}$ the $36 \times 4$ LiDAR range image with $r_{\max}=4$ m, and
+$\delta_{t,k}$ the distance to the surface of the $k$-th nearest moving obstacle,
+clamped to the sensor range. Every term is evaluated once per control step (10 Hz).
 
 ## The policy
 
@@ -152,6 +190,24 @@ the distribution mean is used.
 * Contacts in the dynamic scenes are real. The safety filter only vetoes the robot's
   own next step and assumes obstacles stay put, so a fast lateral approach can still
   close the gap between two decisions. This is discussed in Section 3 of the report.
+
+## References
+
+1. Z. Xu, X. Han, H. Shen, H. Jin, K. Shimada, "NavRL: Learning Safe Flight in Dynamic
+   Environments," *IEEE Robotics and Automation Letters*, vol. 10, no. 4,
+   pp. 3668-3675, 2025. doi:[10.1109/LRA.2025.3546069](https://doi.org/10.1109/LRA.2025.3546069),
+   preprint [arXiv:2409.15634](https://arxiv.org/abs/2409.15634).
+2. Z. Xu, "NavRL — Autonomous UAV Navigation with Reinforcement Learning," source code
+   at commit `3725bcc2e7c1be4ecf1455d922299ae85042603a`,
+   [github.com/Zhefan-Xu/NavRL](https://github.com/Zhefan-Xu/NavRL), MIT licence.
+   The files vendored into `src/navrl_pretrained/` are listed in `ATTRIBUTION.md`.
+3. J. Schulman, F. Wolski, P. Dhariwal, A. Radford, O. Klimov, "Proximal Policy
+   Optimization Algorithms," [arXiv:1707.06347](https://arxiv.org/abs/1707.06347), 2017.
+   The actor-critic algorithm the checkpoint was trained with.
+4. J. Schulman, P. Moritz, S. Levine, M. Jordan, P. Abbeel, "High-Dimensional
+   Continuous Control Using Generalized Advantage Estimation,"
+   [arXiv:1506.02438](https://arxiv.org/abs/1506.02438), 2015. The GAE estimator used
+   in the upstream PPO configuration (`gamma = 0.99`, `lambda = 0.95`).
 
 ## Acknowledgement
 
