@@ -8,7 +8,7 @@ Nothing in this repository trains a policy: the checkpoint is used for inference
 only. This module exists so that the equation the policy was shaped by is present as
 executable code with tests, instead of only being described in prose.
 
-The reward is a sum of six terms, evaluated once per control step (10 Hz):
+The reward is a sum of six terms, evaluated once per training step:
 
 .. math::
 
@@ -29,16 +29,23 @@ where
 * ``v_t`` is the world-frame velocity command, ``\\hat{g}_t`` the unit vector from the
   robot to its goal, so the first term rewards motion towards the goal and only that
   (a robot flying sideways earns nothing from it);
-* ``\\lambda_{t,w,h}`` is the LiDAR range image, 36 beams horizontally by 4 vertically,
-  with ``r_max = 4 m``; ``r_{max} - \\lambda`` is therefore the gap left to the nearest
-  static surface in that beam;
+* ``\\lambda_{t,w,h}`` is the LiDAR *gap* image: the upstream code stores
+  ``r_max - distance``, not the distance itself (``self.lidar_scan = self.lidar_range -
+  ...``, env.py line 437). ``r_{max} - \\lambda`` therefore recovers the distance to the
+  nearest static surface in that beam, and the term is ``log`` of that distance. Passing
+  the raw measured distance would flip the sign of the term;
 * ``\\delta_{t,k}`` is the distance from the robot to the surface of the ``k``-th of the
   ``K = 5`` nearest moving obstacles, clamped to the sensor range;
-* ``z_{lo}, z_{hi}`` are the altitude band bounds, and only the excess over
-  ``z \\pm 0.2 m`` is penalised, so a robot inside the band pays nothing;
-* the terminal step adds nothing. A collision, a goal or a timeout all end the episode
-  with no bonus and no extra penalty (the upstream ``-50`` collision term is commented
-  out), so a bad episode cannot be bought back later.
+* ``z_{lo}, z_{hi}`` are per-episode bounds: ``z_{lo} = \\min(z_{start}, z_{goal}) - 0.2``
+  and ``z_{hi} = \\max(z_{start}, z_{goal}) + 0.2`` (env.py lines 416-417 and 565-566).
+  They are *not* the fixed terminal bounds 0.2 m / 4 m — with start and goal both at 2 m
+  the penalty-free band is 1.8-2.2 m, so a robot at 3 m is already penalised even though
+  it has not left the terminal band;
+* the final step adds nothing: the ``-50`` collision term is commented out upstream
+  (env.py line 580), so a bad episode cannot be bought back later. Note that reaching the
+  goal does *not* by itself terminate the episode — upstream ``terminated`` is only
+  ``below_bound | above_bound | collision`` and ``reach_goal`` goes to the statistics
+  only; the episode ends on a collision, leaving the altitude band, or the step limit.
 
 Two shapes are worth noting. Both safety terms are logarithmic rather than linear,
 so the reward saturates at the sensor range and a robot gains little by hovering far
@@ -94,12 +101,17 @@ def goal_progress_term(velocity, goal_rel_pos):
 
 
 def static_safety_term(lidar_scan, lidar_range=4.0):
-    """``mean log(clamp(lidar_range - scan, eps, lidar_range))`` over the range image.
+    """``mean log(clamp(lidar_range - scan, eps, lidar_range))`` over the gap image.
 
-    ``lidar_scan`` is the measured distance (metres); the term is the gap left to the
-    surface, averaged over every beam. Clamping at ``eps`` keeps ``log`` finite when a
-    beam reads the full range, and the upper clamp at ``lidar_range`` prevents any
-    single beam from dominating.
+    ``lidar_scan`` is the **gap image** the upstream environment stores, i.e.
+    ``lidar_range - distance`` (env.py line 437), not the measured distance. The term is
+    therefore ``log`` of the true distance, averaged over every beam: close surfaces give
+    a small reward, open space saturates at ``log(lidar_range)``. Clamping at ``eps``
+    keeps ``log`` finite when a beam reads the full range; the upper clamp at
+    ``lidar_range`` prevents any single beam from dominating.
+
+    Passing the raw measured distance instead of the gap image would invert the term, so
+    do not "fix" the subtraction below.
     """
     scan = np.asarray(lidar_scan, dtype=float)
     gap = np.clip(lidar_range - scan, EPS, lidar_range)
@@ -127,16 +139,25 @@ def smoothness_penalty(velocity, prev_velocity):
     return np.linalg.norm(v - p, axis=-1)
 
 
-def height_penalty(z, z_lo=0.2, z_hi=4.0):
-    """``(z - z_hi)_+^2 + (z_lo - z)_+^2``, zero inside the band."""
+def height_penalty(z, z_lo, z_hi):
+    """``(z - z_hi)_+^2 + (z_lo - z)_+^2``, zero inside the band.
+
+    ``z_lo`` and ``z_hi`` are the per-episode bounds ``min(z_start, z_goal) - 0.2`` and
+    ``max(z_start, z_goal) + 0.2``; they have no default on purpose, because the fixed
+    terminal bounds (0.2 m and 4 m) are a *different* pair and using them here would
+    silently widen the penalty-free band by metres.
+    """
     z = np.asarray(z, dtype=float)
     return np.maximum(z - z_hi, 0.0) ** 2 + np.maximum(z_lo - z, 0.0) ** 2
 
 
-def total_reward(velocity, prev_velocity, goal_rel_pos, z, lidar_scan,
-                 obstacle_distances=None, lidar_range=4.0,
-                 z_lo=0.2, z_hi=4.0):
-    """Sum of the six terms, exactly as the upstream reward is assembled."""
+def total_reward(velocity, prev_velocity, goal_rel_pos, z, lidar_scan, z_lo, z_hi,
+                 obstacle_distances=None, lidar_range=4.0):
+    """Sum of the six terms, exactly as the upstream reward is assembled.
+
+    ``lidar_scan`` is the gap image (see :func:`static_safety_term`) and ``z_lo`` /
+    ``z_hi`` are the per-episode altitude bounds (see :func:`height_penalty`).
+    """
     r = (GOAL_PROGRESS * goal_progress_term(velocity, goal_rel_pos)
          + STEP_BONUS
          + STATIC_WEIGHT * static_safety_term(lidar_scan, lidar_range)

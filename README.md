@@ -92,7 +92,7 @@ src/
   reward.py            the training reward equation, transcribed and testable
   run_scenarios.py     runs the three scenes with the policy, writes results/
   navrl_pretrained/    vendored inference code + checkpoint (see ATTRIBUTION.md)
-tests/                 unittest suite, 46 tests
+tests/                 unittest suite, 49 tests
 results/               results.json, summary.csv, figure
 docs/                  report and one frame per scene
 media/                 three mp4 recordings and their GIF previews
@@ -124,7 +124,7 @@ ffmpeg -y -framerate 10 -i runs/Static/f_%04d.png -c:v libx264 -pix_fmt yuv420p 
 python -m unittest discover -s tests -t .
 ```
 
-46 tests, no third-party runner needed. They cover the sampling rules (start and
+49 tests, no third-party runner needed. They cover the sampling rules (start and
 goal separation, obstacle placement, arena bounds), the safety filter (a step into
 an obstacle is changed, a step outside the arena is stopped), the metric definitions,
 the reward equation below, and a consistency check on the shipped
@@ -159,13 +159,16 @@ $$
 | Static safety | $\frac{1}{WH}\sum \log(r_{\max}-\lambda)$ | +1 | Logarithmic, so the reward saturates at the 4 m sensor range and one close beam dominates. |
 | Dynamic safety | $\frac{1}{K}\sum \log \delta_{t,k}$ | +1 | Same shape for the $K=5$ nearest moving obstacles; omitted when a scene has none. |
 | Smoothness | $\lVert v_t - v_{t-1}\rVert$ | −0.1 | Penalises acceleration, not speed, so fast but steady flight stays cheap. |
-| Height | $(z-z_{hi})_+^2 + (z_{lo}-z)_+^2$ | −8 | Zero inside the band; eight times heavier than smoothness because leaving it ends the episode. |
-| Terminal step | — | 0 | Collision, goal and timeout all end the episode with no bonus, so a bad episode cannot be bought back. |
+| Height | $(z-z_{hi})_+^2 + (z_{lo}-z)_+^2$ | −8 | Zero inside a tight band (±0.2 m around the flight altitude); eight times heavier than smoothness, so a climb costs more than a wiggle. |
+| Terminal step | — | 0 | Nothing is added on the last step: the upstream collision penalty is commented out, so a bad episode cannot be bought back. Reaching the goal does not terminate the episode by itself — only a collision, leaving the altitude band, or the step limit does. |
 
 Here $v_t$ is the world-frame velocity command, $\hat{g}_t$ the unit vector to the
-goal, $\lambda_{t,w,h}$ the $36 \times 4$ LiDAR range image with $r_{\max}=4$ m, and
-$\delta_{t,k}$ the distance to the surface of the $k$-th nearest moving obstacle,
-clamped to the sensor range. Every term is evaluated once per control step (10 Hz).
+goal, $\lambda_{t,w,h}$ the $36 \times 4$ LiDAR **gap** image with $r_{\max}=4$ m (the
+upstream code stores $r_{\max}$ minus the distance, so $r_{\max}-\lambda$ recovers the
+distance to the surface), and $\delta_{t,k}$ the distance to the surface of the $k$-th
+nearest moving obstacle, clamped to the sensor range. Every term is evaluated once per
+training step; $z_{lo}$ and $z_{hi}$ are the per-episode bounds
+$\min(z_{\text{start}}, z_{\text{goal}}) \mp 0.2$, not the fixed terminal bounds.
 
 ## The policy
 
