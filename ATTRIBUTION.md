@@ -18,7 +18,7 @@ Copied unchanged, from the upstream `quick-demos/` folder:
 | `env.py` | the training env reward block, kept for reference |
 | `ckpts/navrl_checkpoint.pt` | released checkpoint, 177,388 parameters |
 
-Everything else is mine: `scenarios.py`, `metrics.py`, `run_scenarios.py`, the test
+Everything else is mine: `scenarios.py`, `metrics.py`, `reward.py`, `run_scenes.py`, the test
 suite, the results and the report.
 
 If you reuse this repository, keep this file and the upstream MIT licence with it.

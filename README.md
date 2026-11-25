@@ -90,7 +90,7 @@ src/
   scenarios.py         scenario sampling, safety filter, clearance  (NumPy only)
   metrics.py           success rate, near miss, penetration, clearance  (NumPy only)
   reward.py            the training reward equation, transcribed and testable
-  run_scenarios.py     runs the three scenes with the policy, writes results/
+  run_scenes.py        runs the three scenes with the policy, writes results/
   navrl_pretrained/    vendored inference code + checkpoint (see ATTRIBUTION.md)
 tests/                 unittest suite, 49 tests
 results/               results.json, summary.csv, figure
@@ -100,14 +100,14 @@ media/                 three mp4 recordings and their GIF previews
 
 The split matters: `scenarios.py` and `metrics.py` have no torch dependency, so the
 geometry and the metric definitions are testable on any machine. Only
-`run_scenarios.py` needs the deep learning stack.
+`run_scenes.py` needs the deep learning stack.
 
 ## Running the scenes
 
 ```bash
-python src/run_scenarios.py --out runs/            # ~4 minutes on one CPU core
-python src/run_scenarios.py --out runs/ --no-frames  # numbers only, faster
-python src/run_scenarios.py --scene dynamic --out runs/  # one scene only
+python src/run_scenes.py                          # all three scenes, ~6 minutes
+NO_FRAMES=1 python src/run_scenes.py              # numbers only, faster
+python src/run_scenes.py dynamic                  # one scene only
 ```
 
 Then write the numbers back into `results/` (the script does this automatically) and,
